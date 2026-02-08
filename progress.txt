@@ -1,0 +1,9 @@
+2026-2-7 
+created input manager stub
+screen wipes with color on input xy motion rgb(xGy)
+added small java to interact with system
+app can set viewport style to classic, modern, and fullscreen
+android build target 34
+
+2026-2-6 ...
+2026-2-4 ...

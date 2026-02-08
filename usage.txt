@@ -1,0 +1,19 @@
+Reminders on how to build and test the app (android)
+
+• Clean gradle cache
+gradlew.bat clean
+
+• build your app:
+gradlew.bat assembleDebug
+
+• install your app:
+adb -s LMG820UM342cfd48 install -r app\build\outputs\apk\debug\app-debug.apk
+
+• clear logcat:
+adb -s LMG820UM342cfd48 logcat -c
+
+• Listen to _your_ device
+adb -s LMG820UM342cfd48 logcat | findstr MyLuaApp
+
+• If the app is crashing before any logging occurs
+adb -s LMG820UM342cfd48 logcat -c | adb -s LMG820UM342cfd48 logcat *:E
