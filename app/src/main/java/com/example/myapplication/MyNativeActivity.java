@@ -61,10 +61,12 @@ public class MyNativeActivity extends android.app.NativeActivity {
 
     // Called from native (JNI) to toggle modes at runtime
     public void setUiMode(int mode) {
-        uiMode = mode;
-        applyUiMode();
-        ViewCompat.requestApplyInsets(getWindow().getDecorView());
-    }
+		uiMode = mode;
+		runOnUiThread(() -> {
+			applyUiMode();
+			ViewCompat.requestApplyInsets(getWindow().getDecorView());
+		});
+	}
 
     private void applyUiMode() {
         final View decor = getWindow().getDecorView();
@@ -75,7 +77,7 @@ public class MyNativeActivity extends android.app.NativeActivity {
             c.setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
             c.hide(WindowInsetsCompat.Type.systemBars());
         } else if (uiMode == UI_FIT_CLASSIC) {
-            WindowCompat.setDecorFitsSystemWindows(getWindow(), true);
+            //WindowCompat.setDecorFitsSystemWindows(getWindow(), true);
             c.show(WindowInsetsCompat.Type.systemBars());
         } else { // UI_FIT_MODERN
             WindowCompat.setDecorFitsSystemWindows(getWindow(), false);

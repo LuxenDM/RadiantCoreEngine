@@ -75,6 +75,7 @@ add_library(mylua_android SHARED
     platform/android/paths_android.cpp
 	platform/android/input_android.cpp
     platform/android/ui_insets_jni.cpp
+	platform/android/presentation_android.cpp
 )
 
 target_include_directories(mylua_android PRIVATE

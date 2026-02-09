@@ -1,3 +1,9 @@
+2026-2-8
+added /docs folder for foundational project data
+reworked EGL viewport based on render arch doc
+fixed android fit_classic mode
+EGL viewport handles rotation and resize
+
 2026-2-7 
 created input manager stub
 screen wipes with color on input xy motion rgb(xGy)

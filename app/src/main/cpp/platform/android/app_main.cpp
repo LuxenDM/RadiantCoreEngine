@@ -2,7 +2,6 @@
 
 #include <string>
 #include <android/input.h>
-#include <jni.h>
 
 // project headers
 #include "app/log.h"
@@ -12,15 +11,29 @@
 #include "input/input.h"
 
 #include "gfx/egl_renderer.h"
+#include "gfx/presentation_types.h"
+
+#include "platform/android/presentation_android.h"
+
 #include "luax/lua_runtime.h"
 
 // from platform/android/paths_android.cpp
 namespace app::paths { void init_from_android_app(android_app* app); }
 
+// from platform/android/ui_insets_jni.cpp
+int ui_inset_left();
+int ui_inset_top();
+int ui_inset_right();
+int ui_inset_bottom();
+
 struct AppState {
     EglRenderer renderer;
     input::InputState input;
     bool animating = false;
+
+    std::string presentation_mode = "fit_classic"; // default
+	
+	int pending_resize_frames = 0;
 };
 
 static void handle_cmd(android_app* app, int32_t cmd) {
@@ -32,6 +45,9 @@ static void handle_cmd(android_app* app, int32_t cmd) {
             LOGI("APP_CMD_INIT_WINDOW");
             if (st->renderer.init((void*)app->window)) {
                 st->animating = true;
+
+                // Optional OS/UI request; simulation happens regardless.
+                platform::android_presentation::apply_mode(app, st->presentation_mode);
             }
         }
         break;
@@ -41,7 +57,24 @@ static void handle_cmd(android_app* app, int32_t cmd) {
         st->renderer.shutdown();
         st->animating = false;
         break;
-
+	
+	case APP_CMD_GAINED_FOCUS:
+		LOGI("APP_CMD_GAINED_FOCUS");
+		platform::android_presentation::apply_mode(app, st->presentation_mode);
+		break;
+	
+	case APP_CMD_CONTENT_RECT_CHANGED:
+		LOGI("APP_CMD_CONTENT_RECT_CHANGED");
+		st->pending_resize_frames = 3;
+		break;
+	
+	case APP_CMD_WINDOW_RESIZED:
+		LOGI("APP_CMD_WINDOW_RESIZED");
+		st->pending_resize_frames = 3;
+		break;
+	
+	
+	
     default:
         break;
     }
@@ -83,7 +116,6 @@ static int32_t handle_input(android_app* app, AInputEvent* event) {
             return 1;
 
         case AMOTION_EVENT_ACTION_MOVE: {
-            // Use pointer 0 as your "primary" for now
             const int32_t count = AMotionEvent_getPointerCount(event);
             if (count > 0) {
                 const int32_t id0 = AMotionEvent_getPointerId(event, 0);
@@ -101,30 +133,16 @@ static int32_t handle_input(android_app* app, AInputEvent* event) {
     }
 }
 
-/*
-	set_ui_mode(app, 0) -> fit inside (classic, viewport shrinks inside bars)
-	set_ui_mode(app, 1) -> fit inside (modern, app must handle layout) (default)
-	set_ui_mode(app, 2) -> fullscreen
-	
-	can use UiMode::<type>
-*/
-enum class UiMode { FitClassic=0, FitModern=1, Immersive=2 };
-static void set_ui_mode(android_app* app, int mode) {
-    ANativeActivity* act = app->activity;
-    JavaVM* vm = act->vm;
-    JNIEnv* env = nullptr;
-
-    vm->AttachCurrentThread(&env, nullptr);
-
-    jobject activity = act->clazz; // your MyNativeActivity instance
-    jclass cls = env->GetObjectClass(activity);
-    jmethodID mid = env->GetMethodID(cls, "setUiMode", "(I)V");
-    env->CallVoidMethod(activity, mid, (jint)mode);
-
-    env->DeleteLocalRef(cls);
-    // (No Detach here if you stay on the same thread for app lifetime; optional.)
+static SurfaceMetrics build_surface_metrics(const AppState& st) {
+    SurfaceMetrics m{};
+    m.surface_w = st.renderer.width();
+    m.surface_h = st.renderer.height();
+    m.inset_l = ui_inset_left();
+    m.inset_t = ui_inset_top();
+    m.inset_r = ui_inset_right();
+    m.inset_b = ui_inset_bottom();
+    return m;
 }
-
 
 void android_main(struct android_app* app) {
     LOGI("android_main() start");
@@ -132,23 +150,20 @@ void android_main(struct android_app* app) {
     AppState state;
     app->userData = &state;
     app->onAppCmd = handle_cmd;
-	
-	set_ui_mode(app, 0);
-	
-	platform::android_input::install(app, &state.input);
+    app->onInputEvent = handle_input;
 
+    // Install Android input bridge
+    platform::android_input::install(app, &state.input);
 
     // Init platform paths once.
     app::paths::init_from_android_app(app);
 
-    // Build script path in POSIX style
+    // Run Lua script (current behavior)
     const auto& p = app::paths::get();
     if (!p.data.empty()) {
         std::string script = app::paths::join(p.data, "scripts/main.lua");
         LOGI("Trying Lua script: %s", script.c_str());
-
         luax_run_file(script.c_str());
-
         LOGI("Returned from luax_run_file()");
     } else {
         LOGE("No valid data directory (paths.data is empty)");
@@ -159,53 +174,76 @@ void android_main(struct android_app* app) {
     android_poll_source* source = nullptr;
 
     while (true) {
-		state.input.begin_frame();
+        state.input.begin_frame();
         int timeout_ms = state.animating ? 16 : -1;
 
         for (;;) {
-			int ident = ALooper_pollOnce(timeout_ms, nullptr, &events, (void**)&source);
+            int ident = ALooper_pollOnce(timeout_ms, nullptr, &events, (void**)&source);
 
-			if (ident == ALOOPER_POLL_TIMEOUT) {
-				break; // no events ready
-			}
-			if (ident == ALOOPER_POLL_ERROR) {
-				break; // looper error
-			}
+            if (ident == ALOOPER_POLL_TIMEOUT) break;
+            if (ident == ALOOPER_POLL_ERROR) break;
 
-			if (source) source->process(app, source);
+            if (source) source->process(app, source);
 
-			if (app->destroyRequested) {
-				state.renderer.shutdown();
-				return;
-			}
+            if (app->destroyRequested) {
+                state.renderer.shutdown();
+                return;
+            }
 
-			// If we were in "block forever" mode (-1), don't keep draining;
-			// do one event and then go back to blocking.
-			if (timeout_ms == -1) break;
-
-			// Otherwise: after the first wait, drain without blocking.
-			timeout_ms = 0;
-		}
-
+            if (timeout_ms == -1) break;
+            timeout_ms = 0;
+        }
 
         if (state.renderer.is_ready() && state.animating) {
-			const float w = (float)state.renderer.width();
-			const float h = (float)state.renderer.height();
+			if (state.pending_resize_frames > 0) {
+				if (state.renderer.recalc_surface_size()) {
+					// size changed again; keep checking a couple more frames
+					state.pending_resize_frames = 3;
+				} else {
+					state.pending_resize_frames--;
+				}
+			}
+			
+            // Compute and apply presentation primitives each frame for now.
+            // (Later: only recompute when insets/mode changes.)
+            SurfaceMetrics m = build_surface_metrics(state);
+            PresentationResult pr = platform::android_presentation::compute_result(state.presentation_mode, m);
 
-			float r = 0.0f;
-			float b = 0.0f;
-
-			if (w > 0.0f && h > 0.0f) {
-				r = state.input.pointer_x() / w;
-				b = state.input.pointer_y() / h;
-
-				// clamp (just in case)
-				if (r < 0.0f) r = 0.0f; else if (r > 1.0f) r = 1.0f;
-				if (b < 0.0f) b = 0.0f; else if (b > 1.0f) b = 1.0f;
+            // Apply output rect (viewport)
+            state.renderer.set_viewport(pr.output_rect.x, pr.output_rect.y, pr.output_rect.w, pr.output_rect.h);
+			// New: scissor restricts clears/draws to output rect
+			state.renderer.set_output_rect(pr.output_rect);
+			
+			if (state.presentation_mode == "fit_classic") {
+				state.renderer.set_scissor_rect(pr.output_rect); // **this is the key**
+			} else {
+				state.renderer.clear_scissor();
 			}
 
-			state.renderer.render_frame(r, 1.0f, b);
-		}
+
+            // Existing color wipe based on pointer position (still uses full surface for now)
+            const float w = (float)state.renderer.width();
+            const float h = (float)state.renderer.height();
+
+            float r = 0.0f;
+            float b = 0.0f;
+
+            if (w > 0.0f && h > 0.0f) {
+                r = state.input.pointer_x() / w;
+                b = state.input.pointer_y() / h;
+
+                if (r < 0.0f) r = 0.0f; else if (r > 1.0f) r = 1.0f;
+                if (b < 0.0f) b = 0.0f; else if (b > 1.0f) b = 1.0f;
+            }
+			LOGI("mode=%s surface=%dx%d insets LTRB=%d,%d,%d,%d output=%d,%d %dx%d",
+				state.presentation_mode.c_str(),
+				m.surface_w, m.surface_h,
+				m.inset_l, m.inset_t, m.inset_r, m.inset_b,
+				pr.output_rect.x, pr.output_rect.y, pr.output_rect.w, pr.output_rect.h);
+
+
+            state.renderer.render_frame(r, 1.0f, b);
+        }
     }
 }
 
