@@ -189,7 +189,7 @@ void EglRenderer::render_frame(float r, float g, float b, float a) {
     // ----- PASS 1: clear the full surface to a border color (black)
     glDisable(GL_SCISSOR_TEST);
     glViewport(0, 0, width_, height_);
-    glClearColor(1.f, 0.f, 1.f, 1.f);
+    glClearColor(0.f, 0.f, 0.f, 1.f);
     glClear(GL_COLOR_BUFFER_BIT);
 
     // ----- Compute the content viewport (from your existing viewport logic)

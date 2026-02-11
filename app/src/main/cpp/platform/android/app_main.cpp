@@ -4,18 +4,25 @@
 #include <android/input.h>
 
 // project headers
+//// generics
 #include "app/log.h"
 #include "app/paths.h"
 
+//// input and device management
 #include "platform/android/input_android.h"
 #include "input/input.h"
 
+//// android os interactions
+#include "platform/android/presentation_android.h"
+#include "platform/android/rce_platform.h"
+
+//// graphical output
 #include "gfx/egl_renderer.h"
 #include "gfx/presentation_types.h"
 
-#include "platform/android/presentation_android.h"
-
+//// lua subsystem
 #include "luax/lua_runtime.h"
+
 
 // from platform/android/paths_android.cpp
 namespace app::paths { void init_from_android_app(android_app* app); }
@@ -151,6 +158,9 @@ void android_main(struct android_app* app) {
     app->userData = &state;
     app->onAppCmd = handle_cmd;
     app->onInputEvent = handle_input;
+	
+	rce_android_bind_activity(app->activity);
+	rce_android_set_allowed_rotations(RCE_ROT_90 | RCE_ROT_270);
 
     // Install Android input bridge
     platform::android_input::install(app, &state.input);
@@ -220,8 +230,8 @@ void android_main(struct android_app* app) {
 				state.renderer.clear_scissor();
 			}
 
-
-            // Existing color wipe based on pointer position (still uses full surface for now)
+			/*
+			// Existing color wipe based on pointer position (still uses full surface for now)
             const float w = (float)state.renderer.width();
             const float h = (float)state.renderer.height();
 
@@ -243,6 +253,48 @@ void android_main(struct android_app* app) {
 
 
             state.renderer.render_frame(r, 1.0f, b);
+			*/
+            // Existing color wipe based on pointer position (still uses full surface for now)
+            const float w = (float)state.renderer.width();
+            const float h = (float)state.renderer.height();
+
+            float hue = 0.0f;
+            float saturation = 0.0f;
+
+            if (w > 0.0f && h > 0.0f) {
+                hue = state.input.pointer_x() / w;
+                saturation = state.input.pointer_y() / h;
+
+                if (hue < 0.0f) hue = 0.0f; else if (hue > 1.0f) hue = 1.0f;
+                if (saturation < 0.0f) saturation = 0.0f; else if (saturation > 1.0f) saturation = 1.0f;
+            }
+			LOGI("mode=%s surface=%dx%d insets LTRB=%d,%d,%d,%d output=%d,%d %dx%d",
+				state.presentation_mode.c_str(),
+				m.surface_w, m.surface_h,
+				m.inset_l, m.inset_t, m.inset_r, m.inset_b,
+				pr.output_rect.x, pr.output_rect.y, pr.output_rect.w, pr.output_rect.h);
+
+
+            // Map x -> hue and y -> saturation with value fixed at 1.0.
+            const float value = 1.0f;
+            const float h6 = hue * 6.0f;
+            const int i = (int)h6;
+            const float f = h6 - (float)i;
+            const float p = value * (1.0f - saturation);
+            const float q = value * (1.0f - saturation * f);
+            const float t = value * (1.0f - saturation * (1.0f - f));
+
+            float r = 0.0f, g = 0.0f, b = 0.0f;
+            switch (i % 6) {
+                case 0: r = value; g = t;     b = p;     break;
+                case 1: r = q;     g = value; b = p;     break;
+                case 2: r = p;     g = value; b = t;     break;
+                case 3: r = p;     g = q;     b = value; break;
+                case 4: r = t;     g = p;     b = value; break;
+                case 5: r = value; g = p;     b = q;     break;
+            }
+
+            state.renderer.render_frame(r, g, b);
         }
     }
 }
