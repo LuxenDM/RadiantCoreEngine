@@ -13,7 +13,7 @@ adb -s LMG820UM342cfd48 install -r app\build\outputs\apk\debug\app-debug.apk
 adb -s LMG820UM342cfd48 logcat -c
 
 • Listen to _your_ device
-adb -s LMG820UM342cfd48 logcat | findstr MyLuaApp
+adb -s LMG820UM342cfd48 logcat -c | adb -s LMG820UM342cfd48 logcat | findstr MyLuaApp
 
 • If the app is crashing before any logging occurs
 adb -s LMG820UM342cfd48 logcat -c | adb -s LMG820UM342cfd48 logcat *:E
