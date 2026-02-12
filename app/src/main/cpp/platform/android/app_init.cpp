@@ -5,16 +5,22 @@
 
 // project headers
 //// generics
-#include "app/log.h"
-#include "app/paths.h"
+#include "app/log.h" // LOGE(), LOGI(), future message logging and formatter
+#include "app/paths.h" // application write paths
+#include "app/event_pipe.h" // primitive event handler
+#include "app/event_dispatcher.h" // primitive event handler
+
+
+#include "app/engine.h" // primitive event handler
+
+//// platform objects
+#include "platform/android/android_runtime.h"
+#include "platform/android/presentation_android.h"
+#include "platform/android/rce_platform.h"
 
 //// input and device management
 #include "platform/android/input_android.h"
 #include "input/input.h"
-
-//// android os interactions
-#include "platform/android/presentation_android.h"
-#include "platform/android/rce_platform.h"
 
 //// graphical output
 #include "gfx/egl_renderer.h"
@@ -23,6 +29,8 @@
 //// lua subsystem
 #include "luax/lua_runtime.h"
 
+// temporary
+#include <time.h>
 
 // from platform/android/paths_android.cpp
 namespace app::paths { void init_from_android_app(android_app* app); }
@@ -42,6 +50,14 @@ struct AppState {
 	
 	int pending_resize_frames = 0;
 };
+
+// temporary
+uint64_t platform_now_ms() {
+    timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return uint64_t(ts.tv_sec) * 1000ull +
+           uint64_t(ts.tv_nsec) / 1000000ull;
+}
 
 static void handle_cmd(android_app* app, int32_t cmd) {
     auto* st = (AppState*)app->userData;
@@ -159,8 +175,16 @@ void android_main(struct android_app* app) {
     app->onAppCmd = handle_cmd;
     app->onInputEvent = handle_input;
 	
-	rce_android_bind_activity(app->activity);
-	rce_android_set_allowed_rotations(RCE_ROT_90 | RCE_ROT_270);
+	//rce_android_bind_activity(app->activity);
+	//rce_android_set_allowed_rotations(RCE_ROT_90 | RCE_ROT_270);
+	platform::android_runtime::init(app);
+	rce_android_set_allowed_rotations(RCE_ROT_90 | RCE_ROT_270); //temp
+	
+	rce::EPMsg m{};
+	m.type = rce::EPType::SetAllowedRotations;
+	m.a = RCE_ROT_0; // portrait only
+	rce::ep_post_e2p(m);
+
 
     // Install Android input bridge
     platform::android_input::install(app, &state.input);
@@ -182,6 +206,13 @@ void android_main(struct android_app* app) {
 
     int events = 0;
     android_poll_source* source = nullptr;
+	
+	// RegisterEvent("InsetsChanged", _callback)
+	rce::ep_subscribe(rce::EPType::InsetsChanged, [](const rce::EPMsg& msg) {
+		LOGI("Insets changed via dispatcher: %u %u %u %u",
+			 msg.a, msg.b, msg.c, msg.d);
+	});
+
 
     while (true) {
         state.input.begin_frame();
@@ -203,7 +234,21 @@ void android_main(struct android_app* app) {
             if (timeout_ms == -1) break;
             timeout_ms = 0;
         }
+		
+		platform::android_runtime::pump_engine_commands();
+		
+		rce::ep_dispatch_all_p2e(); // trigger event dispatcher to handle events in pipe
+		
+		// compute deltatime
+		static uint64_t last_ms = platform_now_ms();
+		uint64_t now = platform_now_ms();
+		float dt = (now - last_ms) / 1000.0f;
+		last_ms = now;
 
+		rce::engine_tick(dt);
+		
+		
+		
         if (state.renderer.is_ready() && state.animating) {
 			if (state.pending_resize_frames > 0) {
 				if (state.renderer.recalc_surface_size()) {
@@ -229,6 +274,8 @@ void android_main(struct android_app* app) {
 			} else {
 				state.renderer.clear_scissor();
 			}
+			
+			platform::android_runtime::pump_engine_commands();
 
 			/*
 			// Existing color wipe based on pointer position (still uses full surface for now)
