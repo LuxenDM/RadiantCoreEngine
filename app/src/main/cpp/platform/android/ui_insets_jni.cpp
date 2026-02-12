@@ -2,6 +2,8 @@
 #include <atomic>
 #include <android/native_activity.h> // ANativeActivity
 
+#include "app/event_pipe.h"
+
 // -------------------------
 // Insets (existing behavior)
 // -------------------------
@@ -16,6 +18,14 @@ Java_com_example_myapplication_MyNativeActivity_nativeOnInsetsChanged(
     g_inset_t.store((int)t);
     g_inset_r.store((int)r);
     g_inset_b.store((int)b);
+	
+	rce::EPMsg m{};
+	m.type = rce::EPType::InsetsChanged;
+	m.a = (uint32_t)l;
+	m.b = (uint32_t)t;
+	m.c = (uint32_t)r;
+	m.d = (uint32_t)b;
+	rce::ep_post_p2e(m);
 }
 
 int ui_inset_left()   { return g_inset_l.load(); }

@@ -51,7 +51,12 @@ target_compile_options(lua PRIVATE -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0)
 add_library(mylua_core STATIC
     components/luax/lua_runtime.cpp
     components/gfx/egl_renderer.cpp
-    components/app/paths.cpp
+    
+	components/app/paths.cpp
+	components/app/event_pipe.cpp
+	components/app/event_dispatcher.cpp
+	components/app/engine.cpp
+	
 	components/input/input.cpp
 )
 
@@ -70,7 +75,8 @@ target_link_libraries(mylua_core PUBLIC lua)
 # Android shared library (.so)
 # =================================
 add_library(mylua_android SHARED
-    platform/android/app_main.cpp
+    platform/android/app_init.cpp
+	platform/android/android_runtime.cpp
     platform/android/native_app_glue_include.c
     platform/android/paths_android.cpp
 	platform/android/input_android.cpp
