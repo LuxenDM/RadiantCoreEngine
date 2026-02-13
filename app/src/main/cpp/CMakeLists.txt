@@ -56,6 +56,8 @@ add_library(mylua_core STATIC
 	components/app/event_pipe.cpp
 	components/app/event_dispatcher.cpp
 	components/app/engine.cpp
+	components/app/time.cpp
+	components/app/timer.cpp
 	
 	components/input/input.cpp
 )

@@ -7,8 +7,10 @@
 //// generics
 #include "app/log.h" // LOGE(), LOGI(), future message logging and formatter
 #include "app/paths.h" // application write paths
+#include "app/time.h" // time core module
 #include "app/event_pipe.h" // primitive event handler
 #include "app/event_dispatcher.h" // primitive event handler
+#include "app/timer.h" // primitive time-based scheduler
 
 
 #include "app/engine.h" // primitive event handler
@@ -175,11 +177,18 @@ void android_main(struct android_app* app) {
     app->onAppCmd = handle_cmd;
     app->onInputEvent = handle_input;
 	
-	//rce_android_bind_activity(app->activity);
-	//rce_android_set_allowed_rotations(RCE_ROT_90 | RCE_ROT_270);
+	// start time control system
+	
+	// initialize various app subsystems
 	platform::android_runtime::init(app);
+	rce::engine_init();
+	rce::time_init(platform_now_ms());
+	
+	// mark as landscape (this gets overwritten currently)
+	// this is very temporary anyways for testing stuff, this should be called by core app functionality, not platform code.
 	rce_android_set_allowed_rotations(RCE_ROT_90 | RCE_ROT_270); //temp
 	
+	// whatever this was for, in using the pipe/dispatcher.
 	rce::EPMsg m{};
 	m.type = rce::EPType::SetAllowedRotations;
 	m.a = RCE_ROT_0; // portrait only
@@ -212,8 +221,21 @@ void android_main(struct android_app* app) {
 		LOGI("Insets changed via dispatcher: %u %u %u %u",
 			 msg.a, msg.b, msg.c, msg.d);
 	});
-
-
+	
+	
+	
+	
+	
+	//playground values
+	float hsv_hue = 0.0f;
+	
+	// timer: every 1 second, add 0.1 to hsv_hue, loop around when needed
+	rce::timers_every(0.1f, [&hsv_hue](rce::TimerId) {
+		hsv_hue += 0.001f;
+		if (hsv_hue >= 1.0f) hsv_hue -= 1.0f;
+	});
+	
+	
     while (true) {
         state.input.begin_frame();
         int timeout_ms = state.animating ? 16 : -1;
@@ -237,17 +259,9 @@ void android_main(struct android_app* app) {
 		
 		platform::android_runtime::pump_engine_commands();
 		
-		rce::ep_dispatch_all_p2e(); // trigger event dispatcher to handle events in pipe
-		
 		// compute deltatime
-		static uint64_t last_ms = platform_now_ms();
-		uint64_t now = platform_now_ms();
-		float dt = (now - last_ms) / 1000.0f;
-		last_ms = now;
-
+		float dt = rce::time_update(platform_now_ms());
 		rce::engine_tick(dt);
-		
-		
 		
         if (state.renderer.is_ready() && state.animating) {
 			if (state.pending_resize_frames > 0) {
@@ -301,44 +315,38 @@ void android_main(struct android_app* app) {
 
             state.renderer.render_frame(r, 1.0f, b);
 			*/
-            // Existing color wipe based on pointer position (still uses full surface for now)
+            // Existing color wipe based on pointer position
             const float w = (float)state.renderer.width();
             const float h = (float)state.renderer.height();
+			
+            float hsv_saturation = 0.0f;
+			float hsv_value = 0.0f;
+			
+			if (w > 0.0f && h > 0.0f) {
+                hsv_value = state.input.pointer_x() / w;
+                hsv_saturation = state.input.pointer_y() / h;
 
-            float hue = 0.0f;
-            float saturation = 0.0f;
-
-            if (w > 0.0f && h > 0.0f) {
-                hue = state.input.pointer_x() / w;
-                saturation = state.input.pointer_y() / h;
-
-                if (hue < 0.0f) hue = 0.0f; else if (hue > 1.0f) hue = 1.0f;
-                if (saturation < 0.0f) saturation = 0.0f; else if (saturation > 1.0f) saturation = 1.0f;
+                //if (hsv_hue < 0.0f) hsv_hue = 0.0f; else if (hsv_hue > 1.0f) hsv_hue = 1.0f;
+                if (hsv_saturation < 0.0f) hsv_saturation = 0.0f; else if (hsv_saturation > 1.0f) hsv_saturation = 1.0f;
+				if (hsv_value < 0.0f) hsv_value = 0.0f; else if (hsv_value > 1.0f) hsv_value = 1.0f;
             }
-			LOGI("mode=%s surface=%dx%d insets LTRB=%d,%d,%d,%d output=%d,%d %dx%d",
-				state.presentation_mode.c_str(),
-				m.surface_w, m.surface_h,
-				m.inset_l, m.inset_t, m.inset_r, m.inset_b,
-				pr.output_rect.x, pr.output_rect.y, pr.output_rect.w, pr.output_rect.h);
-
-
-            // Map x -> hue and y -> saturation with value fixed at 1.0.
-            const float value = 1.0f;
-            const float h6 = hue * 6.0f;
+			
+            // Map x -> hsv_hue and y -> hsv_saturation with value fixed at 1.0.
+            const float h6 = hsv_hue * 6.0f;
             const int i = (int)h6;
             const float f = h6 - (float)i;
-            const float p = value * (1.0f - saturation);
-            const float q = value * (1.0f - saturation * f);
-            const float t = value * (1.0f - saturation * (1.0f - f));
+            const float p = hsv_value * (1.0f - hsv_saturation);
+            const float q = hsv_value * (1.0f - hsv_saturation * f);
+            const float t = hsv_value * (1.0f - hsv_saturation * (1.0f - f));
 
             float r = 0.0f, g = 0.0f, b = 0.0f;
             switch (i % 6) {
-                case 0: r = value; g = t;     b = p;     break;
-                case 1: r = q;     g = value; b = p;     break;
-                case 2: r = p;     g = value; b = t;     break;
-                case 3: r = p;     g = q;     b = value; break;
-                case 4: r = t;     g = p;     b = value; break;
-                case 5: r = value; g = p;     b = q;     break;
+                case 0: r = hsv_value; g = t;     b = p;     break;
+                case 1: r = q;     g = hsv_value; b = p;     break;
+                case 2: r = p;     g = hsv_value; b = t;     break;
+                case 3: r = p;     g = q;     b = hsv_value; break;
+                case 4: r = t;     g = p;     b = hsv_value; break;
+                case 5: r = hsv_value; g = p;     b = q;     break;
             }
 
             state.renderer.render_frame(r, g, b);
